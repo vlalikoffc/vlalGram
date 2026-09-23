@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 ALLOW_FILE="ci/secret-allowlist.txt"
 # hex-строки нормальны: вендоренные библиотеки, схемы TL, тесты, бинарники
-SKIP_RE='^(TMessagesProj/jni/|TMessagesProj_AppTests/tlscheme/|TMessagesProj_AppTests/src/|ci/check-secrets\.sh$|ci/apply-secrets\.sh$|ci/secret-allowlist\.txt$)|\.(jar|aar|keystore|jks|so|png|jpg|webp|pack|ttf|zip|svg)$'
+SKIP_RE='^(TMessagesProj/jni/|TMessagesProj_AppTests/tlscheme/|TMessagesProj_AppTests/src/|ci/check-secrets\.sh$|ci/apply-secrets\.sh$|ci/workflow.*\.yml$|ci/secret-allowlist\.txt$)|\.(jar|aar|keystore|jks|so|png|jpg|webp|pack|ttf|zip|svg)$'
 # где вообще может лежать api_hash
 HEX_RE='BuildVars\.java$|gradle\.properties$|google-services\.json$|agconnect-services\.json$|AndroidManifest.*\.xml$|\.gradle$|\.properties$|^ci/'
 
