@@ -41,6 +41,20 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
+      # Ключи (api_id/api_hash, свой keystore, google-services.json) берутся из
+      # Settings → Secrets and variables → Actions. В репозитории их нет и быть не должно.
+      # Если секреты не заведены — шаг просто ничего не меняет.
+      - name: Подставить секреты
+        env:
+          VLAL_APP_ID: ${{ secrets.VLAL_APP_ID }}
+          VLAL_APP_HASH: ${{ secrets.VLAL_APP_HASH }}
+          VLAL_GOOGLE_SERVICES_B64: ${{ secrets.VLAL_GOOGLE_SERVICES_B64 }}
+          VLAL_KEYSTORE_B64: ${{ secrets.VLAL_KEYSTORE_B64 }}
+          VLAL_KEYSTORE_PASSWORD: ${{ secrets.VLAL_KEYSTORE_PASSWORD }}
+          VLAL_KEY_ALIAS: ${{ secrets.VLAL_KEY_ALIAS }}
+          VLAL_KEY_PASSWORD: ${{ secrets.VLAL_KEY_PASSWORD }}
+        run: bash ci/apply-secrets.sh
+
       - name: Сборка APK
         env:
           MODULE: ${{ inputs.module }}
