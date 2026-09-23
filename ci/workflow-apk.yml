@@ -1,0 +1,68 @@
+name: build-apk
+
+# Этот файл надо перенести в .github/workflows/build-apk.yml
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Что собирать"
+        type: choice
+        options:
+          - TMessagesProj_App
+          - TMessagesProj_AppStandalone
+        default: TMessagesProj_App
+      abi:
+        description: "Архитектура"
+        type: choice
+        options:
+          - arm64-v8a
+          - all
+        default: arm64-v8a
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'build.gradle', 'settings.gradle') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Сборка APK
+        env:
+          MODULE: ${{ inputs.module }}
+          ABI: ${{ inputs.abi }}
+        run: bash ci/build-apk.sh
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlalGram-${{ github.run_number }}
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Выложить в Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="build-${{ github.run_number }}"
+          gh release create "$tag" out/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "vlalGram $tag" \
+            --notes "Сборка GitHub Actions: модуль ${{ inputs.module }}, ABI ${{ inputs.abi }}." \
+            --prerelease \
+            || gh release upload "$tag" out/*.apk --clobber --repo "$GITHUB_REPOSITORY"
