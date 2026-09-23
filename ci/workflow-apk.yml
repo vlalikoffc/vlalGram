@@ -5,12 +5,20 @@ on:
   workflow_dispatch:
     inputs:
       module:
-        description: "Что собирать"
+        description: "Что собирать (Standalone ставится рядом с официальным Telegram)"
         type: choice
         options:
           - TMessagesProj_App
           - TMessagesProj_AppStandalone
-        default: TMessagesProj_App
+        default: TMessagesProj_AppStandalone
+      variant:
+        description: "Вариант сборки"
+        type: choice
+        options:
+          - afatRelease
+          - afatStandalone
+          - afatDebug
+        default: afatStandalone
       abi:
         description: "Архитектура"
         type: choice
@@ -18,6 +26,10 @@ on:
           - arm64-v8a
           - all
         default: arm64-v8a
+      generate_keystore:
+        description: "Сгенерировать свой ключ подписи (для раздачи)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -55,19 +67,36 @@ jobs:
           VLAL_KEY_PASSWORD: ${{ secrets.VLAL_KEY_PASSWORD }}
         run: bash ci/apply-secrets.sh
 
+      - name: Свой ключ подписи (если попросили)
+        if: ${{ inputs.generate_keystore }}
+        env:
+          VLAL_KEYSTORE_B64: ${{ secrets.VLAL_KEYSTORE_B64 }}
+          VLAL_KEYSTORE_PASSWORD: ${{ secrets.VLAL_KEYSTORE_PASSWORD }}
+          VLAL_KEY_ALIAS: ${{ secrets.VLAL_KEY_ALIAS }}
+        run: bash ci/make-keystore.sh
+
       - name: Сборка APK
         env:
           MODULE: ${{ inputs.module }}
+          VARIANT: ${{ inputs.variant }}
           ABI: ${{ inputs.abi }}
         run: bash ci/build-apk.sh
 
-      - name: Артефакт
+      - name: Артефакт APK
         uses: actions/upload-artifact@v4
         with:
           name: vlalGram-${{ github.run_number }}
           path: out/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Артефакт ключа (если генерировали)
+        if: ${{ inputs.generate_keystore }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlal-keystore
+          path: out/release.keystore
+          retention-days: 90
 
       - name: Выложить в Releases
         env:
@@ -77,6 +106,6 @@ jobs:
           gh release create "$tag" out/*.apk \
             --repo "$GITHUB_REPOSITORY" \
             --title "vlalGram $tag" \
-            --notes "Сборка GitHub Actions: модуль ${{ inputs.module }}, ABI ${{ inputs.abi }}." \
+            --notes "Сборка GitHub Actions: модуль ${{ inputs.module }}, вариант ${{ inputs.variant }}, ABI ${{ inputs.abi }}." \
             --prerelease \
             || gh release upload "$tag" out/*.apk --clobber --repo "$GITHUB_REPOSITORY"
