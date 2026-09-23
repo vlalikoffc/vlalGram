@@ -24,6 +24,22 @@ esc() { printf '%s' "$1" | sed -e 's/[&\\|]/\\&/g'; }
 b64d() { base64 -d 2>/dev/null || base64 --decode; }
 changed=0
 
+# --- проверки: понятная ошибка в логе лучше, чем загадочное падение Gradle ---
+if [ -n "${VLAL_APP_ID:-}" ] && ! printf '%s' "$VLAL_APP_ID" | grep -qE '^[0-9]{1,10}$'; then
+  echo "!! VLAL_APP_ID должен быть числом (например 1234567), как на my.telegram.org."
+  echo "   Само значение не печатаю. Поправь секрет: Settings → Secrets and variables → Actions."
+  exit 1
+fi
+if [ -n "${VLAL_APP_HASH:-}" ] && ! printf '%s' "$VLAL_APP_HASH" | grep -qE '^[0-9a-fA-F]{32}$'; then
+  echo "!! VLAL_APP_HASH должен быть 32 символа 0-9/a-f (например 0123456789abcdef0123456789abcdef)."
+  echo "   Само значение не печатаю. Возьми его на my.telegram.org → API development tools."
+  exit 1
+fi
+if { [ -n "${VLAL_APP_ID:-}" ] && [ -z "${VLAL_APP_HASH:-}" ]; } || { [ -z "${VLAL_APP_ID:-}" ] && [ -n "${VLAL_APP_HASH:-}" ]; }; then
+  echo "!! Задан только один из VLAL_APP_ID / VLAL_APP_HASH — это пара, нужны оба."
+  exit 1
+fi
+
 if [ -n "${VLAL_APP_ID:-}" ]; then
   sed -i -E "s|(public static int APP_ID = )[0-9]+;|\1${VLAL_APP_ID};|" "$BV"
   changed=1
