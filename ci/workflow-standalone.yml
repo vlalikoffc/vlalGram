@@ -1,0 +1,151 @@
+name: build-apk
+
+# Самодостаточный workflow: ничего из ci/ не требует, можно вставить содержимое
+# в .github/workflows/build-apk.yml (Add file → Create new file) и запускать.
+on:
+  workflow_dispatch:
+    inputs:
+      keystore:
+        description: "Сгенерировать свой ключ подписи (для раздачи)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            "$ANDROID_SDK_ROOT/ndk" "$ANDROID_SDK_ROOT/system-images" "$ANDROID_SDK_ROOT/sources" || true
+          df -h / | tail -1
+
+      - name: Android SDK / NDK
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Подмодули
+        run: |
+          git submodule update --init --recursive --depth 1 --jobs 4 \
+            || git submodule update --init --recursive --jobs 4
+
+      # Значения берутся из Settings → Secrets and variables → Actions.
+      # В репозитории их нет; в логи не выводятся.
+      - name: Подставить секреты
+        env:
+          VLAL_APP_ID: ${{ secrets.VLAL_APP_ID }}
+          VLAL_APP_HASH: ${{ secrets.VLAL_APP_HASH }}
+          VLAL_GOOGLE_SERVICES_B64: ${{ secrets.VLAL_GOOGLE_SERVICES_B64 }}
+          VLAL_KEYSTORE_B64: ${{ secrets.VLAL_KEYSTORE_B64 }}
+          VLAL_KEYSTORE_PASSWORD: ${{ secrets.VLAL_KEYSTORE_PASSWORD }}
+          VLAL_KEY_ALIAS: ${{ secrets.VLAL_KEY_ALIAS }}
+        run: |
+          set -e
+          BV=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          GP=gradle.properties
+
+          if [ -n "$VLAL_APP_ID" ] || [ -n "$VLAL_APP_HASH" ]; then
+            if ! printf '%s' "$VLAL_APP_ID" | grep -qE '^[0-9]{1,10}$'; then
+              echo "!! VLAL_APP_ID должен быть числом (как на my.telegram.org)"; exit 1
+            fi
+            if ! printf '%s' "$VLAL_APP_HASH" | grep -qE '^[0-9a-fA-F]{32}$'; then
+              echo "!! VLAL_APP_HASH должен быть 32 символа 0-9/a-f"; exit 1
+            fi
+            sed -i -E "s/(public static int APP_ID = )[0-9]+;/\1$VLAL_APP_ID;/" "$BV"
+            sed -i -E "s/(public static String APP_HASH = \")[^\"]*(\";)/\1$VLAL_APP_HASH\2/" "$BV"
+            echo "== свои api_id/api_hash подставлены"
+          fi
+
+          if [ -n "$VLAL_GOOGLE_SERVICES_B64" ]; then
+            printf '%s' "$VLAL_GOOGLE_SERVICES_B64" | base64 -d > TMessagesProj_AppStandalone/google-services.json
+            printf '%s' "$VLAL_GOOGLE_SERVICES_B64" | base64 -d > TMessagesProj/google-services.json
+            echo "== свой google-services.json подставлен"
+          fi
+
+          if [ -n "$VLAL_KEYSTORE_B64" ]; then
+            printf '%s' "$VLAL_KEYSTORE_B64" | base64 -d > TMessagesProj/config/release.keystore
+            echo "== свой release.keystore подставлен"
+          fi
+
+          if [ -n "$VLAL_KEYSTORE_PASSWORD" ]; then
+            sed -i -E "s|^(RELEASE_STORE_PASSWORD=).*|\1$VLAL_KEYSTORE_PASSWORD|" "$GP"
+            sed -i -E "s|^(RELEASE_KEY_PASSWORD=).*|\1$VLAL_KEYSTORE_PASSWORD|" "$GP"
+          fi
+          if [ -n "$VLAL_KEY_ALIAS" ]; then
+            sed -i -E "s|^(RELEASE_KEY_ALIAS=).*|\1$VLAL_KEY_ALIAS|" "$GP"
+          fi
+          echo "== секреты обработаны (значения в лог не выводятся)"
+
+      - name: Свой ключ подписи
+        if: ${{ inputs.keystore }}
+        env:
+          VLAL_KEYSTORE_B64: ${{ secrets.VLAL_KEYSTORE_B64 }}
+          VLAL_KEYSTORE_PASSWORD: ${{ secrets.VLAL_KEYSTORE_PASSWORD }}
+          VLAL_KEY_ALIAS: ${{ secrets.VLAL_KEY_ALIAS }}
+        run: |
+          set -e
+          if [ -n "$VLAL_KEYSTORE_B64" ]; then
+            echo "== свой keystore уже задан секретом — генерировать нечего"
+            exit 0
+          fi
+          if [ -z "$VLAL_KEYSTORE_PASSWORD" ]; then
+            echo "!! Нужен секрет VLAL_KEYSTORE_PASSWORD (любой пароль) — иначе ключ будет нечем открыть"
+            exit 1
+          fi
+          A="${VLAL_KEY_ALIAS:-vlalgram}"
+          mkdir -p out
+          keytool -genkeypair -keystore out/release.keystore -alias "$A" \
+            -keyalg RSA -keysize 4096 -validity 10950 -storetype PKCS12 \
+            -storepass "$VLAL_KEYSTORE_PASSWORD" -keypass "$VLAL_KEYSTORE_PASSWORD" \
+            -dname "CN=vlalGram, OU=vlalGram, O=vlalGram, L=Riga, C=LV" > /dev/null
+          cp out/release.keystore TMessagesProj/config/release.keystore
+          echo "== ключ сгенерирован (alias=$A); пароль — тот, что в VLAL_KEYSTORE_PASSWORD"
+          echo "== скачай артефакт vlal-keystore и сохрани его: без него не будет обновлений «поверх»"
+
+      - name: Сборка APK
+        run: |
+          set -e
+          sed -i 's/"armeabi-v7a", "arm64-v8a", "x86", "x86_64"/"arm64-v8a"/g' TMessagesProj_AppStandalone/build.gradle
+          chmod +x gradlew
+          ./gradlew --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
+            :TMessagesProj_AppStandalone:assembleAfatStandalone
+          mkdir -p out
+          find TMessagesProj_AppStandalone/build/outputs/apk -name '*.apk' -exec cp -f {} out/ \;
+          ls -lh out
+
+      - name: Артефакт APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlalGram-${{ github.run_number }}
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Артефакт ключа
+        if: ${{ inputs.keystore }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlal-keystore
+          path: out/release.keystore
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="build-${{ github.run_number }}"
+          gh release create "$tag" out/*.apk --repo "$GITHUB_REPOSITORY" \
+            --title "vlalGram $tag" --notes "Автосборка (standalone, arm64-v8a)." --prerelease
